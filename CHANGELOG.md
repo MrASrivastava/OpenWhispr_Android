@@ -10,6 +10,9 @@ etc.) -- if it wouldn't mean anything to someone who just installed the app,
 it doesn't belong here.
 
 ## 3.11.0
+- A short animated splash screen when the app starts (Android 12 and newer)
+- Recording overlay redesigned: the logo bars turn soft red and move with your voice, instead of a blinking microphone
+- Setting descriptions no longer run into their switches
 - Cleaner settings screen: rounded sections, clearer switch descriptions, and a status line that tells you exactly what's missing (tap it to jump to the fix)
 - Checking for updates when the app opens is now optional and off by default -- turn it on in Settings, or tap "Check for updates" any time
 - The update dialog always shows what's new, with a link to the full release notes on GitHub

@@ -72,6 +72,21 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // [ui] Android 12+ drops the splash as soon as the first frame is
+        // drawn, which would cut the icon animation short on a fast phone.
+        // Wait for whatever is left of it (at most 1s), then fade out.
+        // The splash itself is the Theme.OpenWhispr.Launch theme.
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            splashScreen.setOnExitAnimationListener { splash ->
+                val start = splash.iconAnimationStart?.toEpochMilli()
+                val duration = splash.iconAnimationDuration?.toMillis() ?: 0L
+                val remaining = if (start == null) 0L
+                    else (start + duration - System.currentTimeMillis()).coerceIn(0L, 1000L)
+                splash.animate().alpha(0f).setStartDelay(remaining).setDuration(200)
+                    .withEndAction { splash.remove() }.start()
+            }
+        }
+
         // Best-effort: lets the background service show its "still running"
         // notification (Android 13+ requires this permission for any
         // notification, including the foreground-service one). Not gated on
@@ -900,7 +915,10 @@ class MainActivity : AppCompatActivity() {
         if (leading != null) row.addView(leading)
 
         val textContainer = vertical(0).apply {
-            layoutParams = LinearLayout.LayoutParams(0, LP_WRAP, 1f)
+            layoutParams = LinearLayout.LayoutParams(0, LP_WRAP, 1f).apply {
+                // [ui] Keep wrapped text clear of the switch/button beside it.
+                if (widget != null) marginEnd = dp(16)
+            }
         }
 
         textContainer.addView(TextView(this).apply {

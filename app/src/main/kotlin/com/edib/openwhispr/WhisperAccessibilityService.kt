@@ -66,8 +66,9 @@ class WhisperAccessibilityService : AccessibilityService() {
         private const val NOTIF_ID = 1
 
         private const val COLOR_IDLE = 0xDD1C1C1E.toInt()
-        private const val COLOR_RECORDING = 0xDDEF4444.toInt()
-        private const val COLOR_BUSY = 0xDD6B6B6B.toInt()
+        // [ui] Soft red for the recording state (logo tint + outline);
+        // replaces the old solid red / grey button colours.
+        private const val COLOR_REC_ACCENT = 0xFFFF6B6B.toInt()
         private const val COLOR_FEEDBACK_BG = 0xEE1C1C1E.toInt()
         private const val COLOR_RING = 0xFFE8EAED.toInt()
     }
@@ -87,6 +88,8 @@ class WhisperAccessibilityService : AccessibilityService() {
     private var accessibilityFocusSignal = false
     private var imeVisibleSignal = false
     private var button: ImageView? = null
+    // [ui] Smoothed recording level for the voice-reactive overlay (main thread).
+    private var audioLevel = 0f
     private var spinner: ProgressBar? = null
     private var feedbackView: TextView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
@@ -482,12 +485,14 @@ class WhisperAccessibilityService : AccessibilityService() {
         feedbackLayoutParams = null
     }
 
-    private fun circle(color: Int) = GradientDrawable().apply {
+    // [ui] Outline colour/width are parameters now (recording uses a thin
+    // soft-red outline); the defaults keep the original white hairline.
+    private fun circle(color: Int, stroke: Int = Color.WHITE, strokePx: Int = 1) = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
         setColor(color)
         // 1 physical pixel, not 1dp -- a true hairline outline so the button
         // stays visible against any surface behind it, in every state.
-        setStroke(1, Color.WHITE)
+        setStroke(strokePx, stroke)
     }
 
     private fun pill(color: Int) = GradientDrawable().apply {
@@ -496,14 +501,22 @@ class WhisperAccessibilityService : AccessibilityService() {
         setColor(color)
     }
 
-    private fun setAppearance(color: Int) {
-        handler.post { button?.background = circle(color) }
-    }
-
-    /** Swaps the overlay's icon: the app logo while idle, the mic glyph
-     * while recording/transcribing. */
-    private fun setIcon(res: Int) {
-        handler.post { button?.setImageResource(res) }
+    /** [ui] The overlay always shows the app's bar logo on the dark
+     * button. Recording tints the bars soft red with a thin red outline
+     * (and onAudioLevel makes the button follow your voice); otherwise
+     * white bars and the original hairline. Replaces the old red button
+     * with a blinking white mic glyph. */
+    private fun setRecordingLook(recording: Boolean) {
+        handler.post {
+            val b = button ?: return@post
+            b.setImageResource(R.drawable.ic_app_logo)
+            b.background = if (recording) circle(COLOR_IDLE, COLOR_REC_ACCENT, (1.5f * dp).toInt())
+                           else circle(COLOR_IDLE)
+            b.imageTintList = if (recording) ColorStateList.valueOf(COLOR_REC_ACCENT) else null
+            audioLevel = 0f
+            b.animate().cancel()
+            b.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
+        }
     }
 
     private fun setBusy(visible: Boolean) {
@@ -552,19 +565,17 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun startPulse() {
-        button?.let {
-            it.animate().alpha(0.4f).setDuration(500).withEndAction {
-                it.animate().alpha(1f).setDuration(500).withEndAction {
-                    if (state == State.RECORDING) startPulse()
-                }.start()
-            }.start()
-        }
-    }
-
-    private fun stopPulse() {
-        button?.animate()?.cancel()
-        button?.alpha = 1f
+    /** [ui] Voice-reactive recording: [level] (0..1, the latest audio
+     * buffer's peak) drives the button's size. VU-style smoothing -- rises
+     * at once, falls slowly -- so it swells as you speak and settles when
+     * you're quiet. Max 1.15x fits inside the overlay window (56dp around a
+     * 44dp button). Runs on the main thread. */
+    private fun onAudioLevel(level: Float) {
+        if (state != State.RECORDING) return
+        audioLevel = maxOf(level, audioLevel * 0.85f)
+        val scale = 1f + 0.15f * audioLevel
+        button?.scaleX = scale
+        button?.scaleY = scale
     }
 
     // --- State machine ---
@@ -603,26 +614,35 @@ class WhisperAccessibilityService : AccessibilityService() {
         audioRecord!!.startRecording()
         state = State.RECORDING
         setBusy(false)
-        setAppearance(COLOR_RECORDING)
-        setIcon(R.drawable.ic_mic)
+        setRecordingLook(true) // [ui]
         setOpacity(active = true)
         updateOverlayVisibility()
-        startPulse()
 
         thread {
             val buf = ByteArray(bufSize)
             while (state == State.RECORDING) {
                 val n = audioRecord?.read(buf, 0, buf.size) ?: break
-                if (n > 0) pcmStream?.write(buf, 0, n)
+                if (n > 0) {
+                    pcmStream?.write(buf, 0, n)
+                    // [ui] Peak of this buffer (16-bit little-endian PCM),
+                    // only read for the overlay's voice-reactive size.
+                    var peak = 0
+                    var i = 0
+                    while (i + 1 < n) {
+                        val sample = ((buf[i + 1].toInt() shl 8) or (buf[i].toInt() and 0xFF)).toShort().toInt()
+                        peak = maxOf(peak, abs(sample))
+                        i += 2
+                    }
+                    val level = (peak / 12000f).coerceIn(0f, 1f)
+                    handler.post { onAudioLevel(level) }
+                }
             }
         }
     }
 
     private fun stopAndTranscribe() {
         state = State.TRANSCRIBING
-        stopPulse()
-        setAppearance(COLOR_BUSY)
-        setIcon(R.drawable.ic_mic)
+        setRecordingLook(false) // [ui] white bars + the existing spinner ring
         setBusy(true)
         updateOverlayVisibility()
 
@@ -858,8 +878,7 @@ class WhisperAccessibilityService : AccessibilityService() {
     private fun goIdle() {
         state = State.IDLE
         setBusy(false)
-        setAppearance(COLOR_IDLE)
-        setIcon(R.drawable.ic_app_logo)
+        setRecordingLook(false) // [ui]
         setOpacity(active = false)
         updateOverlayVisibility()
     }

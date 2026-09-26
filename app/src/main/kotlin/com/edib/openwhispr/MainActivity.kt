@@ -78,7 +78,11 @@ class MainActivity : AppCompatActivity() {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 2)
         }
 
-        checkForUpdate()
+        // [privacy] The automatic update check on app open is opt-in (off by
+        // default, including for existing installs), so the app makes no
+        // request to GitHub unless the user enables it or taps "Check for
+        // updates".
+        if (prefs().getBoolean("auto_update_check", false)) checkForUpdate()
 
         val outer = vertical(0, 0)
 
@@ -293,6 +297,21 @@ class MainActivity : AppCompatActivity() {
 
         settingsContainer.addView(settingsRow("Check for updates", "Tap to check now") {
             checkForUpdate(force = true)
+        })
+
+        // [privacy] Opt-in switch for the automatic check on app open (see onCreate).
+        val autoUpdateSwitch = MaterialSwitch(this).apply {
+            isChecked = prefs().getBoolean("auto_update_check", false)
+            isClickable = false
+        }
+        settingsContainer.addView(settingsRow(
+            "Check for updates automatically",
+            "Off: only when you tap Check for updates",
+            autoUpdateSwitch
+        ) {
+            val newVal = !autoUpdateSwitch.isChecked
+            prefs().edit().putBoolean("auto_update_check", newVal).apply()
+            autoUpdateSwitch.isChecked = newVal
         })
 
         outer.addView(statusContainer)
@@ -559,9 +578,10 @@ class MainActivity : AppCompatActivity() {
 
     /** Checks this repo's GitHub Releases. No backend involved. Shows a
      * dialog linking to the release page when a newer version is
-     * available. Runs automatically (and silently, when nothing's new)
-     * once per app-open; [force] bypasses the cache interval and always
-     * gives feedback, for the manual "Check for updates" row. */
+     * available. [privacy] Runs on app-open only if the user turned on
+     * "Check for updates automatically" (silently, when nothing's new);
+     * [force] bypasses the cache interval and always gives feedback, for
+     * the manual "Check for updates" row. */
     private fun checkForUpdate(force: Boolean = false) {
         val currentVersion = try {
             packageManager.getPackageInfo(packageName, 0).versionName
@@ -578,13 +598,18 @@ class MainActivity : AppCompatActivity() {
                         .setMessage(
                             buildString {
                                 append("OpenWispr ${info.version} is available. You're on $currentVersion.")
-                                if (!info.notes.isNullOrBlank()) {
-                                    append("\n\nWhat's new:\n")
-                                    append(info.notes)
-                                }
+                                // [security] Always show a changelog section before
+                                // the user can update, even if the release has no notes.
+                                append("\n\nWhat's new:\n")
+                                append(
+                                    info.notes?.takeIf { it.isNotBlank() }
+                                        ?: "No release notes were published for this version."
+                                )
                             }
                         )
                         .setPositiveButton("Update") { _, _ -> downloadAndInstallUpdate(info) }
+                        // [security] Full release page (complete changelog) before deciding.
+                        .setNeutralButton("View on GitHub") { _, _ -> openReleasePage(info.url) }
                         .setNegativeButton("Later", null)
                         .show()
                 } else if (force) {
@@ -604,11 +629,7 @@ class MainActivity : AppCompatActivity() {
         if (apkUrl == null) {
             // Release has no .apk asset (shouldn't normally happen) -- fall
             // back to the release page rather than doing nothing.
-            try {
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(info.url)))
-            } catch (e: Exception) {
-                toast("Couldn't open browser: ${e.message}")
-            }
+            openReleasePage(info.url)
             return
         }
 
@@ -634,15 +655,32 @@ class MainActivity : AppCompatActivity() {
         }
 
         toast("Downloading update…")
-        UpdateChecker.downloadApk(this, apkUrl) { file, error ->
+        // [security] Pass GitHub's published checksum; downloadApk only
+        // returns a file if it matches.
+        UpdateChecker.downloadApk(this, apkUrl, info.apkSha256) { file, error ->
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 if (file == null) {
-                    toast("Download failed: ${error ?: "unknown error"}")
+                    // [security] A failed download or failed checksum both end
+                    // here; nothing is installed. Offer the release page instead.
+                    android.app.AlertDialog.Builder(this)
+                        .setTitle("Update not installed")
+                        .setMessage("Couldn't download or verify the update, so it wasn't installed.\n\nReason: ${error ?: "unknown error"}")
+                        .setPositiveButton("View on GitHub") { _, _ -> openReleasePage(info.url) }
+                        .setNegativeButton("Close", null)
+                        .show()
                     return@runOnUiThread
                 }
                 installApk(file)
             }
+        }
+    }
+
+    private fun openReleasePage(url: String) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (e: Exception) {
+            toast("Couldn't open browser: ${e.message}")
         }
     }
 

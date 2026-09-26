@@ -28,6 +28,10 @@ OpenWhispr uses Android Accessibility Service only to identify the currently foc
 
 OpenWhispr is not designed to monitor browsing, collect screen content for analytics, or perform background automation.
 
+## Update checks
+
+By default, OpenWhispr only contacts GitHub (`api.github.com`) to look for a new version when you tap "Check for updates". If you turn on "Check for updates automatically", it also checks when the app opens, at most once every 12 hours. These requests carry no personal data, but like any web request they reveal your IP address to GitHub.
+
 ## Data collection
 
 I do not run a backend for OpenWhispr and do not collect user accounts, analytics, or uploaded recordings myself.

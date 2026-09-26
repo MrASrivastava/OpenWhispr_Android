@@ -18,6 +18,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PersistableBundle
 import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
@@ -806,8 +807,7 @@ class WhisperAccessibilityService : AccessibilityService() {
      * instead of inserting at the cursor/selection -- used by voice
      * commands, which transform the whole field rather than append to it. */
     private fun replaceFieldText(text: String) {
-        val clip = ClipData.newPlainText("openwhispr", text)
-        (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
+        copyToClipboard(text)
 
         val candidates = findInjectionCandidates()
         var replaced = false
@@ -865,8 +865,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         feedback: String? = "Copied to clipboard",
         feedbackDurationMs: Long = 2000
     ) {
-        val clip = ClipData.newPlainText("openwhispr", text)
-        (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
+        copyToClipboard(text)
         feedback?.let { showFeedback(it, feedbackDurationMs) }
 
         val candidates = findInjectionCandidates()
@@ -885,6 +884,21 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
 
         Log.i(TAG, if (injected) "Text injection action reported success" else "No injection action succeeded; clipboard fallback only")
+    }
+
+    /** [privacy] Puts dictated text on the clipboard (needed: paste-based
+     * injection and the clipboard fallback read it from there), marked as
+     * sensitive. Android 13+ then hides it in the clipboard preview, and
+     * keyboards that honour the flag keep it out of clipboard suggestions.
+     * Pasting is unaffected. The extra's key is the literal value of
+     * ClipDescription.EXTRA_IS_SENSITIVE (API 33), so this compiles and runs
+     * on minSdk 30, where it is simply ignored. */
+    private fun copyToClipboard(text: String) {
+        val clip = ClipData.newPlainText("openwhispr", text)
+        clip.description.extras = PersistableBundle().apply {
+            putBoolean("android.content.extra.IS_SENSITIVE", true)
+        }
+        (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
     }
 
     private fun findInjectionCandidates(): List<AccessibilityNodeInfo> {

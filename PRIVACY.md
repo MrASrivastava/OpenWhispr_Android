@@ -28,6 +28,10 @@ OpenWhispr uses Android Accessibility Service only to identify the currently foc
 
 OpenWhispr is not designed to monitor browsing, collect screen content for analytics, or perform background automation.
 
+## Clipboard
+
+To insert text, OpenWhispr places the dictated text on the clipboard and pastes it; if insertion fails, the text stays there for you to paste. It is marked as sensitive, so Android 13+ hides it in the clipboard preview and keyboards that honour this flag keep it out of their clipboard suggestions.
+
 ## Update checks
 
 By default, OpenWhispr only contacts GitHub (`api.github.com`) to look for a new version when you tap "Check for updates". If you turn on "Check for updates automatically", it also checks when the app opens, at most once every 12 hours. These requests carry no personal data, but like any web request they reveal your IP address to GitHub.

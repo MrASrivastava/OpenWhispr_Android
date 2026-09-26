@@ -15,7 +15,8 @@ it doesn't belong here.
 - Updates are checked against GitHub's published checksum before installing, and aren't installed if it doesn't match
 - In local mode, audio never goes to the cloud -- if no local model is ready, you're told why instead
 - Fixed a crash when the on-device speech engine couldn't be loaded
-- Dictated text is inserted directly and only placed on the clipboard when that isn't possible -- and then it's marked as sensitive, so Android 13+ hides its preview
+- Dictated text placed on the clipboard is marked as sensitive, so Android 13+ hides its preview
+- "Copied to clipboard" now only appears when the text couldn't be inserted
 - Text from the field you're dictating into is no longer written to the system log
 
 ## 3.10.0

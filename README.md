@@ -129,7 +129,7 @@ OpenWispr supports two modes:
 - **Local mode**: audio stays on-device. If no local model is ready, the app tells you instead of falling back to the cloud. (If Cleanup or Voice commands are on, the transcript *text* is still sent to Groq.)
 - **Cloud mode**: audio is sent directly from your device to Groq's transcription API
 - **Optional cleanup**: transcript text is sent directly from your device to Groq's chat API
-- **Clipboard**: dictated text is only placed on the clipboard when it can't be inserted directly (e.g. apps that only accept paste), marked as sensitive so Android 13+ hides its preview
+- **Clipboard**: dictated text is placed on the clipboard to paste it, marked as sensitive so Android 13+ hides its preview
 
 I don't run a backend for this app. In cloud mode, requests go straight from your phone to Groq using your own API key.
 

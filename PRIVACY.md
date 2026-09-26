@@ -30,7 +30,7 @@ OpenWhispr is not designed to monitor browsing, collect screen content for analy
 
 ## Clipboard
 
-OpenWhispr inserts dictated text directly into the focused field without using the clipboard. Only if that isn't possible (for example, apps that only accept paste) does it place the text on the clipboard to paste it, or leave it there for you to paste. It is marked as sensitive, so Android 13+ hides it in the clipboard preview and keyboards that honour this flag keep it out of their clipboard suggestions.
+To insert text, OpenWhispr places the dictated text on the clipboard and pastes it; if insertion fails, the text stays there for you to paste. It is marked as sensitive, so Android 13+ hides it in the clipboard preview and keyboards that honour this flag keep it out of their clipboard suggestions.
 
 ## Update checks
 

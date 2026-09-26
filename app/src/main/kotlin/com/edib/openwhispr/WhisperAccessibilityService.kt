@@ -962,9 +962,13 @@ class WhisperAccessibilityService : AccessibilityService() {
         val actions = node.actionList.joinToString { action ->
             action.label?.toString() ?: action.id.toString()
         }
+        // [privacy] Never log a field's contents or accessibility label (it can
+        // be the user's message, email, etc.) -- only its length/presence.
+        // Logcat is readable over adb and is bundled into bug reports, and the
+        // app can't control how long it's kept.
         Log.i(
             TAG,
-            "$prefix package=${node.packageName} class=${node.className} focused=${node.isFocused} editable=${node.isEditable} text=${node.text} desc=${node.contentDescription} actions=[$actions]"
+            "$prefix package=${node.packageName} class=${node.className} focused=${node.isFocused} editable=${node.isEditable} textLen=${node.text?.length ?: 0} hasDesc=${node.contentDescription != null} actions=[$actions]"
         )
     }
 

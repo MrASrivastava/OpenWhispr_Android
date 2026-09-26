@@ -10,6 +10,7 @@ etc.) -- if it wouldn't mean anything to someone who just installed the app,
 it doesn't belong here.
 
 ## 3.11.0
+- Cleaner settings screen: rounded sections, clearer switch descriptions, and a status line that tells you exactly what's missing (tap it to jump to the fix)
 - Checking for updates when the app opens is now optional and off by default -- turn it on in Settings, or tap "Check for updates" any time
 - The update dialog always shows what's new, with a link to the full release notes on GitHub
 - Updates are checked against GitHub's published checksum before installing, and aren't installed if it doesn't match

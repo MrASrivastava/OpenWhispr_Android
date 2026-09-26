@@ -29,6 +29,11 @@ import java.io.File
 class MainActivity : AppCompatActivity() {
 
     private lateinit var statusSubtitle: TextView
+    // [ui] Status row dot + tap-to-fix target, and the cloud switch's subtitle.
+    private lateinit var statusRow: LinearLayout
+    private lateinit var statusDotView: View
+    private var statusAction: (() -> Unit)? = null
+    private lateinit var cloudRowSub: TextView
     private lateinit var audioRow: LinearLayout
     private lateinit var audioRowSub: TextView
     private lateinit var audioDot: View
@@ -91,7 +96,8 @@ class MainActivity : AppCompatActivity() {
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(24), dp(64), dp(24), dp(24))
+            // [ui] Less empty space above the title (was 64dp top).
+            setPadding(dp(24), dp(40), dp(24), dp(24))
         }
         header.addView(ImageView(this).apply {
             setImageResource(R.mipmap.ic_launcher)
@@ -115,30 +121,42 @@ class MainActivity : AppCompatActivity() {
         }
         outer.addView(tabLayout)
 
-        statusContainer = vertical(0)
+        // [ui] The status tab no longer starts with a section header, so
+        // give it the same breathing room below the tabs.
+        statusContainer = vertical(0).apply { setPadding(0, dp(16), 0, 0) }
         dictationContainer = vertical(0)
         settingsContainer = vertical(0)
 
+        // [ui] Each section's rows sit on a rounded panel (see group()).
+        // Rows, handlers and the references refresh() uses are unchanged;
+        // only the parent they're added to is.
+
         // ================= Status tab =================
 
-        val statusRow = settingsRow("Status", "Checking...")
+        // [ui] Leading dot + tap-to-fix; both are driven from refresh().
+        statusDotView = statusDot()
+        statusRow = settingsRow("Status", "Checking...", leading = statusDotView) {
+            statusAction?.invoke()
+        }
         statusSubtitle = statusRow.findViewWithTag("subtitle")
-        statusContainer.addView(statusRow)
+        statusContainer.addView(group().apply { addView(statusRow) })
 
         // --- Setup checklist card ---
+        statusContainer.addView(sectionHeader("Setup")) // [ui]
+        val setupGroup = group()
         setupCollapsedRow = settingsRow("Setup", "Checking...") {
             setupExpanded = !setupExpanded
             refresh()
         }
         setupCollapsedRowSub = setupCollapsedRow.findViewWithTag("subtitle")
-        statusContainer.addView(setupCollapsedRow)
+        setupGroup.addView(setupCollapsedRow)
 
         setupDoneSummary = TextView(this).apply {
             textSize = 14f
             setTextColor(DOT_GREEN)
             setPadding(dp(24), 0, dp(24), dp(8))
         }
-        statusContainer.addView(setupDoneSummary)
+        setupGroup.addView(setupDoneSummary)
 
         audioDot = statusDot()
         audioRow = settingsRow("Audio permission", "Checking...", leading = audioDot) {
@@ -147,7 +165,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         audioRowSub = audioRow.findViewWithTag("subtitle")
-        statusContainer.addView(audioRow)
+        setupGroup.addView(audioRow)
 
         accDot = statusDot()
         accRow = settingsRow("Accessibility service", "Checking...", leading = accDot) {
@@ -159,7 +177,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         accRowSub = accRow.findViewWithTag("subtitle")
-        statusContainer.addView(accRow)
+        setupGroup.addView(accRow)
 
         accCaption = TextView(this).apply {
             text = "Needed to detect the focused text field and insert the cleaned-up text there."
@@ -168,16 +186,18 @@ class MainActivity : AppCompatActivity() {
             alpha = 0.8f
             setPadding(dp(24), 0, dp(24), dp(12))
         }
-        statusContainer.addView(accCaption)
+        setupGroup.addView(accCaption)
 
         batteryDot = statusDot()
         batteryRow = settingsRow("Battery optimization", "Checking...", leading = batteryDot) {
             requestBatteryExemption()
         }
         batteryRowSub = batteryRow.findViewWithTag("subtitle")
-        statusContainer.addView(batteryRow)
+        setupGroup.addView(batteryRow)
+        statusContainer.addView(setupGroup)
 
         // --- Background service ---
+        statusContainer.addView(sectionHeader("Service")) // [ui]
         val serviceEnabled = prefs().getBoolean("service_master_enabled", true)
         val serviceSwitch = MaterialSwitch(this).apply {
             isChecked = serviceEnabled
@@ -193,7 +213,7 @@ class MainActivity : AppCompatActivity() {
             serviceSwitch.isChecked = newVal
             WhisperAccessibilityService.instance?.refreshMasterEnabled()
         }
-        statusContainer.addView(serviceRow)
+        statusContainer.addView(group().apply { addView(serviceRow) })
 
         // ================= Dictation tab =================
 
@@ -204,20 +224,25 @@ class MainActivity : AppCompatActivity() {
             isChecked = isCloud
             isClickable = false
         }
-        val cloudRow = settingsRow("Use cloud transcription", "Requires Groq API key", cloudSwitch) {
+        // [ui] Subtitle is set from the switch state in refresh().
+        val cloudRow = settingsRow("Use cloud transcription", "", cloudSwitch) {
             val newCloud = !cloudSwitch.isChecked
             prefs().edit().putBoolean("use_local", !newCloud).apply()
             cloudSwitch.isChecked = newCloud
             refresh()
         }
-        dictationContainer.addView(cloudRow)
+        cloudRowSub = cloudRow.findViewWithTag("subtitle")
+        dictationContainer.addView(group().apply { addView(cloudRow) })
 
         modelContainer = vertical(0)
         modelContainer.addView(sectionHeader("Local models"))
-        for (m in MODEL_CATALOG) modelContainer.addView(buildModelRow(m))
+        val modelGroup = group()
+        for (m in MODEL_CATALOG) modelGroup.addView(buildModelRow(m))
+        modelContainer.addView(modelGroup)
         dictationContainer.addView(modelContainer)
 
         dictationContainer.addView(sectionHeader("Post-Processing"))
+        val postGroup = group()
 
         val isPostProcessing = prefs().getBoolean("use_post_processing", false)
         val postProcessSwitch = MaterialSwitch(this).apply {
@@ -230,7 +255,7 @@ class MainActivity : AppCompatActivity() {
             postProcessSwitch.isChecked = newVal
             refresh()
         }
-        dictationContainer.addView(postProcessRow)
+        postGroup.addView(postProcessRow)
 
         customInstructionsRow = settingsRow("Add custom instructions", "Tap to add extra refinements") {
             promptCustomInstructions()
@@ -238,9 +263,11 @@ class MainActivity : AppCompatActivity() {
         customInstructionsRowSub = customInstructionsRow.findViewWithTag("subtitle")
         customInstructionsRowSub.maxLines = 2
         customInstructionsRowSub.ellipsize = android.text.TextUtils.TruncateAt.END
-        dictationContainer.addView(customInstructionsRow)
+        postGroup.addView(customInstructionsRow)
+        dictationContainer.addView(postGroup)
 
         dictationContainer.addView(sectionHeader("Voice Commands"))
+        val voiceGroup = group()
 
         val isVoiceCommands = prefs().getBoolean("voice_commands_enabled", false)
         val voiceCommandsSwitch = MaterialSwitch(this).apply {
@@ -257,7 +284,7 @@ class MainActivity : AppCompatActivity() {
             voiceCommandsSwitch.isChecked = newVal
             refresh()
         }
-        dictationContainer.addView(voiceCommandsRow)
+        voiceGroup.addView(voiceCommandsRow)
 
         voiceCommandsDetailContainer = vertical(0)
 
@@ -268,26 +295,30 @@ class MainActivity : AppCompatActivity() {
         val examplesRow = settingsRow("Command examples", "See what you can say") { showCommandExamples() }
         voiceCommandsDetailContainer.addView(examplesRow)
 
-        dictationContainer.addView(voiceCommandsDetailContainer)
+        voiceGroup.addView(voiceCommandsDetailContainer)
+        dictationContainer.addView(voiceGroup)
 
         // ================= Settings tab =================
 
-        settingsContainer.addView(sectionHeader("Settings"))
+        // [ui] Header named after what the section holds (was "Settings",
+        // repeating the tab name).
+        settingsContainer.addView(sectionHeader("Groq"))
 
         val keyRow = settingsRow("Groq API Key", "Tap to set") { promptApiKey() }
         keyRowSub = keyRow.findViewWithTag("subtitle")
-        settingsContainer.addView(keyRow)
+        settingsContainer.addView(group().apply { addView(keyRow) })
 
         settingsContainer.addView(sectionHeader("About"))
+        val aboutGroup = group()
 
         val versionName = try {
             packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown"
         } catch (e: Exception) {
             "unknown"
         }
-        settingsContainer.addView(settingsRow("Version", versionName))
+        // [ui] The separate "Version" row is folded into "Check for updates" below.
 
-        settingsContainer.addView(settingsRow("GitHub", "View source & releases") {
+        aboutGroup.addView(settingsRow("GitHub", "View source & releases") {
             try {
                 startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/EdiBianco/OpenWhispr")))
             } catch (e: Exception) {
@@ -295,7 +326,7 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        settingsContainer.addView(settingsRow("Check for updates", "Tap to check now") {
+        aboutGroup.addView(settingsRow("Check for updates", "You're on v$versionName · tap to check") {
             checkForUpdate(force = true)
         })
 
@@ -304,15 +335,24 @@ class MainActivity : AppCompatActivity() {
             isChecked = prefs().getBoolean("auto_update_check", false)
             isClickable = false
         }
-        settingsContainer.addView(settingsRow(
+        // [ui] Subtitle follows the switch state (it used to always say "Off").
+        fun autoUpdateText(on: Boolean) =
+            if (on) "On: checks when the app opens (at most every 12 h)"
+            else "Off: only when you tap Check for updates"
+        lateinit var autoUpdateRowSub: TextView
+        val autoUpdateRow = settingsRow(
             "Check for updates automatically",
-            "Off: only when you tap Check for updates",
+            autoUpdateText(autoUpdateSwitch.isChecked),
             autoUpdateSwitch
         ) {
             val newVal = !autoUpdateSwitch.isChecked
             prefs().edit().putBoolean("auto_update_check", newVal).apply()
             autoUpdateSwitch.isChecked = newVal
-        })
+            autoUpdateRowSub.text = autoUpdateText(newVal)
+        }
+        autoUpdateRowSub = autoUpdateRow.findViewWithTag("subtitle")
+        aboutGroup.addView(autoUpdateRow)
+        settingsContainer.addView(aboutGroup)
 
         outer.addView(statusContainer)
         outer.addView(dictationContainer)
@@ -497,7 +537,8 @@ class MainActivity : AppCompatActivity() {
         triggerPhraseRowSub.text = "\"${prefs().getString("command_trigger_phrase", "Whisper Command")}\""
 
         val apiKey = prefs().getString("api_key", "") ?: ""
-        keyRowSub.text = if (apiKey.isBlank()) "Tap to set"
+        // [ui] Say why the key matters when it's missing (was "Tap to set").
+        keyRowSub.text = if (apiKey.isBlank()) "Not set — needed for cloud and cleanup"
                          else if (apiKey.length > 7) "gsk_...${apiKey.takeLast(4)}"
                          else "gsk_...***"
 
@@ -519,8 +560,28 @@ class MainActivity : AppCompatActivity() {
         val postReady = !usePostProcessing || hasKey
         val ready = audio && acc && (localReady || cloudReady) && postReady
 
-        statusSubtitle.text = if (ready) "Ready — tap the overlay dot to dictate" else "Setup required"
+        // [ui] Say exactly what's missing, in the same terms as `ready`
+        // above (this list is its exact negation, so text and dot agree),
+        // and let a tap jump to the tab where it's fixed. Audio and
+        // accessibility rows are already shown right below, so no jump.
+        val (missing, action) = when {
+            !audio -> "Grant audio permission" to null
+            !acc -> "Turn on the accessibility service" to null
+            useLocal && !hasModel -> "Download a local model — Dictation tab" to { tabLayout.getTabAt(1)?.select(); Unit }
+            !useLocal && !hasKey -> "Add your Groq API key — Settings tab" to { tabLayout.getTabAt(2)?.select(); Unit }
+            usePostProcessing && !hasKey -> "Cleanup needs a Groq API key — Settings tab" to { tabLayout.getTabAt(2)?.select(); Unit }
+            else -> null to null
+        }
+        val mode = (if (useLocal) "on-device" else "cloud") + (if (usePostProcessing) " + cleanup" else "")
+        statusSubtitle.text = if (ready) "Ready · $mode — tap the overlay dot to dictate" else missing ?: "Setup required"
         statusSubtitle.setTextColor(if (ready) attrColor(androidx.appcompat.R.attr.colorPrimary) else attrColor(android.R.attr.textColorSecondary))
+        statusDotView.background = dotDrawable(if (ready) DOT_GREEN else DOT_RED)
+        statusAction = if (ready) null else action
+        statusRow.isClickable = statusAction != null
+
+        // [ui] The cloud switch's subtitle says where audio goes.
+        cloudRowSub.text = if (useLocal) "Off: transcribed on this phone"
+                           else "On: audio is sent to Groq (needs API key)"
 
         refreshAllCards()
         maybeShowBatteryWarning(acc, unrestricted)
@@ -867,7 +928,22 @@ class MainActivity : AppCompatActivity() {
         textSize = 14f
         setTypeface(typeface, Typeface.BOLD)
         setTextColor(attrColor(androidx.appcompat.R.attr.colorPrimary)) // Neutral Android-like blue
-        setPadding(dp(24), dp(24), dp(24), dp(8))
+        // [ui] 40dp start = group() margin (16) + row padding (24), so the
+        // header lines up with the row text inside the panel below it.
+        setPadding(dp(40), dp(24), dp(24), dp(8))
+    }
+
+    /** [ui] A section panel: rounded, in the theme's surface-container
+     * colour (light/dark aware), clipping row ripples to its corners. */
+    private fun group() = vertical(0).apply {
+        background = GradientDrawable().apply {
+            cornerRadius = dp(20).toFloat()
+            setColor(attrColor(com.google.android.material.R.attr.colorSurfaceContainer))
+        }
+        clipToOutline = true
+        layoutParams = LinearLayout.LayoutParams(LP_MATCH, LP_WRAP).apply {
+            setMargins(dp(16), 0, dp(16), dp(8))
+        }
     }
 
     private fun vertical(padH: Int, padV: Int = padH) = LinearLayout(this).apply {

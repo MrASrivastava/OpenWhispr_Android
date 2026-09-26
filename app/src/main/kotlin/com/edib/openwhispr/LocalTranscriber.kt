@@ -24,6 +24,21 @@ class LocalTranscriber private constructor(private val recognizer: OfflineRecogn
     companion object {
         private const val TAG = "LocalTranscriber"
 
+        /** [privacy] Whether the on-device engine (libsherpa-onnx-jni.so)
+         * is present in this build. It lives in the gitignored
+         * app/src/main/jniLibs/, so a build made without it has no local
+         * engine at all. Same loadLibrary call the sherpa bindings make
+         * (a no-op if already loaded). */
+        val nativeEngineAvailable: Boolean by lazy {
+            try {
+                System.loadLibrary("sherpa-onnx-jni")
+                true
+            } catch (e: Throwable) {
+                Log.e(TAG, "sherpa-onnx native library not available", e)
+                false
+            }
+        }
+
         /** Find available model dirs under the app's files/models/ dir */
         fun availableModels(ctx: Context): List<String> {
             val modelsDir = File(ctx.filesDir, "models")
@@ -48,7 +63,10 @@ class LocalTranscriber private constructor(private val recognizer: OfflineRecogn
                 val recognizer = OfflineRecognizer(assetManager = null, config = config)
                 Log.i(TAG, "Loaded model: $modelName")
                 LocalTranscriber(recognizer)
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // [security] Throwable, not Exception: a missing/broken native
+                // library throws UnsatisfiedLinkError / NoClassDefFoundError
+                // (Errors), which previously escaped and crashed the service.
                 Log.e(TAG, "Failed to load model: ${e.message}")
                 null
             }

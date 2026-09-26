@@ -126,7 +126,7 @@ It does **not** replace your keyboard. It does **not** run background automation
 
 OpenWispr supports two modes:
 
-- **Local mode**: audio stays on-device
+- **Local mode**: audio stays on-device. If no local model is ready, the app tells you instead of falling back to the cloud. (If Cleanup or Voice commands are on, the transcript *text* is still sent to Groq.)
 - **Cloud mode**: audio is sent directly from your device to Groq's transcription API
 - **Optional cleanup**: transcript text is sent directly from your device to Groq's chat API
 

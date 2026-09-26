@@ -8,7 +8,7 @@ OpenWhispr supports two transcription modes.
 
 ### Local mode
 
-In local mode, audio is processed on-device using local speech recognition models. Audio does not leave the device.
+In local mode, audio is processed on-device using local speech recognition models. Audio does not leave the device. If no local model is available, OpenWhispr shows a message instead of sending the audio to the cloud. If optional cleanup or voice commands are enabled, the transcribed text (not the audio) is sent to Groq's chat API.
 
 ### Cloud mode
 

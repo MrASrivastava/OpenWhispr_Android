@@ -107,6 +107,9 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     // Local transcription engine (loaded lazily)
     private var localTranscriber: LocalTranscriber? = null
+    // [privacy] Set by initLocalModel (background thread), read on tap.
+    @Volatile private var localModelLoading = false
+    @Volatile private var localModelError: String? = null
 
     private val dp get() = resources.displayMetrics.density
     private val screenW get() = resources.displayMetrics.widthPixels
@@ -192,28 +195,55 @@ class WhisperAccessibilityService : AccessibilityService() {
         // A corrupted/incompatible model file or a native (sherpa-onnx)
         // load failure here must not be allowed to crash the process --
         // that takes the whole accessibility service down with it.
+        // [privacy] Track loading/failure so local mode can tell the user
+        // why it isn't ready instead of silently using the cloud.
+        localModelLoading = true
+        localModelError = null
         try {
+            // [privacy] A build without the native engine can never transcribe
+            // locally; say so rather than failing (or crashing) on every load.
+            if (!LocalTranscriber.nativeEngineAvailable) {
+                localTranscriber = null
+                localModelError = "This build doesn't include the on-device speech engine"
+                return
+            }
+            var attempted = false
             val modelName = prefs().getString("model_name", "") ?: ""
             if (modelName.isBlank()) {
                 // Auto-detect first available model
                 val models = LocalTranscriber.availableModels(this)
                 if (models.isNotEmpty()) {
                     Log.i(TAG, "Auto-detected model: ${models.first()}")
+                    attempted = true
                     localTranscriber = LocalTranscriber.create(this, models.first())
                 }
             } else {
+                attempted = true
                 localTranscriber = LocalTranscriber.create(this, modelName)
             }
             if (localTranscriber != null) {
                 Log.i(TAG, "Local transcription ready")
             } else {
-                Log.i(TAG, "No local model found, will use API")
+                Log.i(TAG, "No local model loaded")
+                if (attempted) localModelError = "Couldn't load the local model. Try selecting or re-downloading it"
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Local model init failed, falling back to API", e)
+        } catch (e: Throwable) {
+            // [security] Throwable, not Exception: native/linkage failures are
+            // Errors and previously escaped this thread, crashing the service.
+            Log.e(TAG, "Local model init failed", e)
             localTranscriber = null
+            localModelError = "Couldn't load the local model. Try selecting or re-downloading it"
+        } finally {
+            localModelLoading = false
         }
     }
+
+    /** [privacy] Why local mode can't transcribe right now. Shown instead of
+     * sending audio to the cloud. */
+    private fun localUnavailableMessage(): String =
+        if (localModelLoading) "Local model is still loading, try again in a moment"
+        else localModelError
+            ?: "No local model. Download one in OpenWispr, or turn on cloud transcription"
 
     /** Reload local model (called from MainActivity when settings change) */
     fun reloadModel() { thread { initLocalModel() } }
@@ -552,6 +582,12 @@ class WhisperAccessibilityService : AccessibilityService() {
             toast("Grant audio permission in OpenWispr app"); return
         }
 
+        // [privacy] In local mode, don't start recording if there's no local
+        // model to transcribe with -- tell the user before they speak.
+        if (prefs().getBoolean("use_local", true) && localTranscriber == null) {
+            toast(localUnavailableMessage()); return
+        }
+
         val bufSize = AudioRecord.getMinBufferSize(
             SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
         )
@@ -601,8 +637,13 @@ class WhisperAccessibilityService : AccessibilityService() {
         val useLocal = prefs().getBoolean("use_local", true)
         val local = localTranscriber
 
+        // [privacy] Local mode never falls back to the cloud: previously a
+        // missing/unloaded model sent the recording to Groq without notice.
+        // Now the audio is discarded and the user is told why.
         if (useLocal && local != null) {
             transcribeLocal(pcm, local)
+        } else if (useLocal) {
+            reset(localUnavailableMessage())
         } else {
             transcribeApi(pcm)
         }

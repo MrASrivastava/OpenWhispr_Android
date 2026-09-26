@@ -740,7 +740,12 @@ class WhisperAccessibilityService : AccessibilityService() {
                     } else if (!cleaned.isNullOrBlank()) {
                         injectText(cleaned)
                     } else {
-                        injectText(text, feedback = "Cleanup failed — raw copied to clipboard", feedbackDurationMs = 3000)
+                        // [privacy] injectText only shows its feedback when it falls back
+                        // to the clipboard; if the raw text was inserted, still say
+                        // that cleanup failed.
+                        if (injectText(text, feedback = "Cleanup failed — raw copied to clipboard", feedbackDurationMs = 3000)) {
+                            showFeedback("Cleanup failed — inserted raw text", 3000)
+                        }
                     }
                     goIdle()
                 }
@@ -807,8 +812,6 @@ class WhisperAccessibilityService : AccessibilityService() {
      * instead of inserting at the cursor/selection -- used by voice
      * commands, which transform the whole field rather than append to it. */
     private fun replaceFieldText(text: String) {
-        copyToClipboard(text)
-
         val candidates = findInjectionCandidates()
         var replaced = false
         try {
@@ -822,6 +825,9 @@ class WhisperAccessibilityService : AccessibilityService() {
             candidates.forEach { it.recycle() }
         }
 
+        // [privacy] Replacement uses ACTION_SET_TEXT (no clipboard), so the
+        // clipboard is only used as the fallback when it fails.
+        if (!replaced) copyToClipboard(text)
         Log.i(TAG, if (replaced) "Command replace succeeded" else "Command replace failed; clipboard fallback only")
         showFeedback(
             if (replaced) "Command applied" else "Couldn't replace field -- copied to clipboard",
@@ -860,23 +866,37 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     // --- Text injection ---
 
+    /** Inserts [text] into the focused field. Returns true if it landed.
+     *
+     * [privacy] The clipboard is only used when needed: first a direct
+     * insert into the focused, editable field (ACTION_SET_TEXT, no
+     * clipboard). Only if that fails is the text put on the clipboard and
+     * the original paste-based attempts run (Termux, custom composers,
+     * paste-only apps). [feedback] is shown only if nothing was inserted,
+     * i.e. the text was left on the clipboard for the user to paste. */
     private fun injectText(
         text: String,
         feedback: String? = "Copied to clipboard",
         feedbackDurationMs: Long = 2000
-    ) {
-        copyToClipboard(text)
-        feedback?.let { showFeedback(it, feedbackDurationMs) }
-
+    ): Boolean {
         val candidates = findInjectionCandidates()
         Log.i(TAG, "Injecting text into ${candidates.size} candidate node(s)")
 
         var injected = false
         try {
-            for (candidate in candidates) {
-                if (tryInjectIntoNode(candidate, text)) {
-                    injected = true
-                    break
+            // [privacy] Pass 1: direct insert into the field the user is in.
+            candidates.firstOrNull { it.isFocused && it.isEditable }?.let {
+                injected = trySetTextAtCursor(it, text)
+                if (injected) verifyInsertedLater(it, text, feedback, feedbackDurationMs)
+            }
+            // Pass 2 (original behaviour): clipboard + paste-based attempts.
+            if (!injected) {
+                copyToClipboard(text)
+                for (candidate in candidates) {
+                    if (tryInjectIntoNode(candidate, text)) {
+                        injected = true
+                        break
+                    }
                 }
             }
         } finally {
@@ -884,11 +904,69 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
 
         Log.i(TAG, if (injected) "Text injection action reported success" else "No injection action succeeded; clipboard fallback only")
+        if (!injected) feedback?.let { showFeedback(it, feedbackDurationMs) }
+        return injected
     }
 
-    /** [privacy] Puts dictated text on the clipboard (needed: paste-based
-     * injection and the clipboard fallback read it from there), marked as
-     * sensitive. Android 13+ then hides it in the clipboard preview, and
+    /** [privacy] Inserts [text] at the cursor (or over the selection) with
+     * ACTION_SET_TEXT, which doesn't touch the clipboard. Ignores the
+     * field's placeholder when it is empty and puts the cursor after the
+     * inserted text, as a paste would. False means the caller should fall
+     * back to the clipboard/paste path. */
+    private fun trySetTextAtCursor(node: AccessibilityNodeInfo, text: String): Boolean {
+        val current = if (node.isShowingHintText) "" else node.text?.toString().orEmpty()
+        val start = if (node.textSelectionStart in 0..current.length) node.textSelectionStart else current.length
+        val end = if (node.textSelectionEnd in 0..current.length) node.textSelectionEnd else start
+        val replacementStart = minOf(start, end)
+        val updated = current.replaceRange(replacementStart, maxOf(start, end), text)
+        val setTextOk = node.performAction(
+            AccessibilityNodeInfo.ACTION_SET_TEXT,
+            Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, updated) }
+        )
+        Log.i(TAG, "Direct ACTION_SET_TEXT => $setTextOk")
+        if (!setTextOk) return false
+
+        val cursor = replacementStart + text.length
+        node.performAction(
+            AccessibilityNodeInfo.ACTION_SET_SELECTION,
+            Bundle().apply {
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, cursor)
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, cursor)
+            }
+        )
+        return true
+    }
+
+    /** [privacy] Safety net for the direct insert: shortly after, re-read
+     * the field and, only if the text isn't there, put it on the clipboard
+     * so the dictation is never lost. Delayed because some apps (e.g.
+     * Jetpack Compose) apply SET_TEXT on the next frame, and it never
+     * pastes, so the text can't end up in the field twice. */
+    private fun verifyInsertedLater(
+        node: AccessibilityNodeInfo,
+        text: String,
+        feedback: String?,
+        feedbackDurationMs: Long
+    ) {
+        val check = AccessibilityNodeInfo.obtain(node)
+        handler.postDelayed({
+            try {
+                // Field gone or unreadable -> can't tell; trust SET_TEXT.
+                val landed = !check.refresh() || check.text?.toString()?.contains(text) != false
+                Log.i(TAG, "Direct insert verified => $landed")
+                if (!landed) {
+                    copyToClipboard(text)
+                    feedback?.let { showFeedback(it, feedbackDurationMs) }
+                }
+            } finally {
+                check.recycle()
+            }
+        }, 500)
+    }
+
+    /** [privacy] Puts dictated text on the clipboard -- only when the
+     * direct insert didn't work (paste-based injection and the manual
+     * fallback read it from there) -- marked as sensitive. Android 13+ then hides it in the clipboard preview, and
      * keyboards that honour the flag keep it out of clipboard suggestions.
      * Pasting is unaffected. The extra's key is the literal value of
      * ClipDescription.EXTRA_IS_SENSITIVE (API 33), so this compiles and runs

@@ -757,6 +757,12 @@ class WhisperAccessibilityService : AccessibilityService() {
                         // Model correctly identified filler-only/no-speech audio;
                         // don't literally type the word "EMPTY" into the field.
                         toast("No speech detected")
+                    } else if (!cleaned.isNullOrBlank() && PostProcessor.looksGenerated(text, cleaned)) {
+                        // [cleanup] The model wrote or rewrote content instead of
+                        // cleaning (e.g. drafted the email you described). Never
+                        // insert that; insert your own words instead.
+                        Log.i(TAG, "Cleanup output rejected (not a cleanup of the transcript); using raw text")
+                        if (injectText(text)) showFeedback("Cleanup skipped — kept your exact words", 3000)
                     } else if (!cleaned.isNullOrBlank()) {
                         injectText(cleaned)
                     } else {
